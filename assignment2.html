@@ -57,8 +57,23 @@
             </tr>
 
             <tr>
+                <td>projection</td>
+                <td><select id="projection" name="projection_type">
+                    <option value="perspective">Perspective</option>
+                    <option value="orthographic">Orthographic</option>
+                    </select>
+                </td>
+            </tr>
+
+            <tr>
                 <td>Load image</td>
                 <td><input type="file" id="fileInput" onchange="loadImageFile(event)">
+                </td>
+            </tr>
+            <tr>
+                <td>Wireframe</td>
+                <td>
+                    <input type="checkbox" id="wireframe">
                 </td>
             </tr>
 

@@ -1,3 +1,9 @@
+// Name: Ryyan Hussain
+// UIN: 679554508
+// This file contains the WebGL code for Project 2.
+// It loads a heightmap image, processes it to create a terrain mesh,
+// and renders it. The user can interact with this rendering
+
 import vertexShaderSrc from './vertex.glsl.js';
 import fragmentShaderSrc from './fragment.glsl.js'
 
@@ -8,6 +14,9 @@ var vertexCount = 0;
 var uniformModelViewLoc = null;
 var uniformProjectionLoc = null;
 var heightmapData = null;
+
+var zAngle = 0;
+
 
 function processImage(img)
 {
@@ -49,8 +58,74 @@ function processImage(img)
 	return {
 		data: heightArray,
 		width: sw,
-		height: sw
+		height: sh
 	};
+}
+
+
+// Create a terrain mesh from heightmap data
+function createTerrainMesh(heightmapData, heightScale = 1.0) {
+    const w = heightmapData.width;  // width
+    const h = heightmapData.height;  // height
+    const data = heightmapData.data;  // brightness data
+
+    const positions = [];  // array to hold vertex positions
+    const colors = [];  // array to hold vertex colors
+
+    for (let z = 0; z < h - 1; z++) {
+        for (let x = 0; x < w - 1; x++) {
+
+            const i00 = z * w + x;  // (x, z) top-left
+            const i10 = z * w + (x + 1);  // (x+1, z) top-right
+            const i01 = (z + 1) * w + x;  // (x, z+1) bottom-left
+            const i11 = (z + 1) * w + (x + 1);  // (x+1, z+1) bottom-right
+
+            const y00 = data[i00] * heightScale;  // height at top-left (x, z)
+            const y10 = data[i10] * heightScale;  // height at top-right (x+1, z)
+            const y01 = data[i01] * heightScale;  // height at bottom-left (x, z+1)
+            const y11 = data[i11] * heightScale;  // height at bottom-right (x+1, z+1)
+
+			// normalized, this will center the terrain around (0,0)
+            const nx = x / (w - 1) - 0.5;  // normalized x
+            const nz = z / (h - 1) - 0.5;  // normalized z
+            const nx1 = (x + 1) / (w - 1) - 0.5;  // normalized x+1
+            const nz1 = (z + 1) / (h - 1) - 0.5;  // normalized z+1
+
+            // Triangle 1
+            positions.push(
+                nx,  y00, nz,  // vertex at (x, z)
+                nx1, y10, nz,  // vertex at (x+1, z)
+                nx1, y11, nz1  // vertex at (x+1, z+1)
+            );
+
+            // Triangle 2
+            positions.push(
+                nx,  y00, nz,  // vertex at (x, z)
+                nx1, y11, nz1,  // vertex at (x+1, z+1)
+                nx,  y01, nz1   // vertex at (x, z+1)
+            );
+
+            // holds the 6 vertices of the two triangles
+            const triangleVertices = [
+                [nx,  y00, nz],  // vertex at (x, z)
+                [nx1, y10, nz],  // vertex at (x+1, z)
+                [nx1, y11, nz1],  // vertex at (x+1, z+1)
+                [nx,  y00, nz],  // vertex at (x, z) since reused for second triangle
+                [nx1, y11, nz1],  // vertex at (x+1, z+1)
+                [nx,  y01, nz1]   // vertex at (x, z+1)
+            ];
+
+			// Compute colors for vertices based on position	
+            for (const v of triangleVertices) {
+				const r = v[0] + 0.5;  // red based on x
+				const g = Math.min(1, v[1] * 2.0);  // green based on y
+				const b = v[2] + 0.5;  // blue based on z
+				colors.push(r, g, b, 1.0);
+            }
+        }
+    }
+
+    return {positions, colors};  // return the mesh data
 }
 
 
@@ -81,6 +156,17 @@ window.loadImageFile = function(event)
 			*/
 			console.log('loaded image: ' + heightmapData.width + ' x ' + heightmapData.height);
 
+            const mesh = createTerrainMesh(heightmapData, 1.0);  // build the terrain mesh
+            vertexCount = mesh.positions.length / 3;  // count of vertices, used by draw()
+
+            const posBuffer = createBuffer(gl, gl.ARRAY_BUFFER, new Float32Array(mesh.positions));  // position buffer
+            const colBuffer = createBuffer(gl, gl.ARRAY_BUFFER, new Float32Array(mesh.colors));  // color buffer
+
+            const posAttribLoc = gl.getAttribLocation(program, "position");  // attribute location for position
+            const colAttribLoc = gl.getAttribLocation(program, "color");  // attribute location for color
+
+            vao = createVAO(gl, posAttribLoc, posBuffer, null, null, colAttribLoc, colBuffer);  // create the VAO with position and color attributes
+
 		};
 		img.onerror = function() 
 		{
@@ -107,32 +193,66 @@ function setupViewMatrix(eye, target)
     return view;
 
 }
+
+
 function draw()
 {
-
 	var fovRadians = 70 * Math.PI / 180;
 	var aspectRatio = +gl.canvas.width / +gl.canvas.height;
 	var nearClip = 0.001;
 	var farClip = 20.0;
 
-	// perspective projection
-	var projectionMatrix = perspectiveMatrix(
-		fovRadians,
-		aspectRatio,
-		nearClip,
-		farClip,
-	);
+	var projectionType = document.querySelector("#projection").value;  // perspective or orthographic
+
+	if (projectionType === "orthographic") {  // orthographic
+		const orthoSize = 2.5;   // adjust view window
+		projectionMatrix = orthographicMatrix(  //calculate orthographic projection matrix
+			-orthoSize * aspectRatio,
+			orthoSize * aspectRatio,
+			-orthoSize,
+			orthoSize,
+			nearClip,
+			farClip
+		);
+	}
+	else {  // perspective
+		var projectionMatrix = perspectiveMatrix(
+			fovRadians,
+			aspectRatio,
+			nearClip,
+			farClip,
+		);
+	}
 
 	// eye and target
-	var eye = [0, 5, 5];
+	var eye = [0, 2.5, 2.5];
 	var target = [0, 0, 0];
 
 	var modelMatrix = identityMatrix();
 
 	// TODO: set up transformations to the model
+	var yAngleDegrees = parseFloat(document.querySelector("#rotation").value);  // reads Y rotation
+	var zoomValue = parseFloat(document.querySelector("#scale").value);  // reads zoom scale
+	var heightValue = parseFloat(document.querySelector("#height").value);  // reads height scale
+	var wireframe = document.querySelector("#wireframe").checked;  // reads wireframe mode
+
+	var yAngleRadians = yAngleDegrees * Math.PI / 180.0;  // degrees to radians
+	var zAngleRadians = zAngle * Math.PI / 180.0;  // takes zAngle and converts to radians
+
+	var rotationY = rotateYMatrix(yAngleRadians);  // rotation matrix around Y axis
+	var rotationZ = rotateZMatrix(zAngleRadians);  // rotation matrix around Z axis
+
+	var scaleFactor = 0.5 + (zoomValue / 200) * 8.5;  // scale factor based on zoom slider
+	var zoomScale = scaleMatrix(scaleFactor, scaleFactor, scaleFactor);  // calculate zoom scale matrix
+
+	var heightFactor = 0.0 + (heightValue / 200) * 2.8;  // height factor based on height slider
+	var heightScale = scaleMatrix(1.0, heightFactor, 1.0);  // calculate height scale matrix
+
+	var panning = translateMatrix(panX, 0, panZ);  // translation matrix based on panX and panZ for panning
+
+	modelMatrix = multiplyArrayOfMatrices([panning, rotationY, rotationZ, zoomScale, heightScale]);  // model = rotation * scale
 
 	// setup viewing matrix
-	var eyeToTarget = subtract(target, eye);
 	var viewMatrix = setupViewMatrix(eye, target);
 
 	// model-view Matrix = view * model
@@ -156,13 +276,22 @@ function draw()
 	gl.uniformMatrix4fv(uniformProjectionLoc, false, new Float32Array(projectionMatrix));
 
 	gl.bindVertexArray(vao);
-	
-	var primitiveType = gl.TRIANGLES;
-	gl.drawArrays(primitiveType, 0, vertexCount);
+
+	var primitiveType = gl.TRIANGLES; 
+
+	if (wireframe) {  // draw in wireframe mode if checked
+		for (let i = 0; i < vertexCount; i += 3) {  // draw each triangle using LINE_LOOP, which connects the vertices with lines
+			gl.drawArrays(gl.LINE_LOOP, i, 3);
+		}
+	} 
+	else {  // draw filled triangles
+		gl.drawArrays(primitiveType, 0, vertexCount);
+	}
 
 	requestAnimationFrame(draw);
 
 }
+
 
 function createBox()
 {
@@ -223,9 +352,12 @@ function createBox()
 
 }
 
+
 var isDragging = false;
 var startX, startY;
 var leftMouse = false;
+
+var panX = 0, panZ = 0;  // panning offsets for the model
 
 function addMouseCallback(canvas)
 {
@@ -254,14 +386,22 @@ function addMouseCallback(canvas)
 	canvas.addEventListener("wheel", function(e)  {
 		e.preventDefault(); // prevents page scroll
 
+		const zoomSlider = document.querySelector("#scale");  // get zoom slider
+		if (!zoomSlider) return;
+
+		const zoomSpeed = 5;  // how fast to zoom in/out
+		let newZoom = parseFloat(zoomSlider.value);  // current zoom value
+
 		if (e.deltaY < 0) 
 		{
 			console.log("Scrolled up");
-			// e.g., zoom in
+			newZoom += zoomSpeed;  // scrolled up, so zoom in
 		} else {
 			console.log("Scrolled down");
-			// e.g., zoom out
+			newZoom -= zoomSpeed;  // scrolled down, so zoom out
 		}
+		newZoom = Math.min(200, Math.max(0, newZoom));  // keeps zoom value consistent with slider limits
+		zoomSlider.value = newZoom;  // update slider to new zoom value
 	});
 
 	document.addEventListener("mousemove", function (e) {
@@ -271,6 +411,28 @@ function addMouseCallback(canvas)
 
 		var deltaX = currentX - startX;
 		var deltaY = currentY - startY;
+
+		startX = currentX;  // this is used to compute delta next time
+		startY = currentY;
+
+		if (!leftMouse) {  // If the right mouse button is being dragged, then pan
+			var panSpeed = 0.01;
+			panX += deltaX * panSpeed;  // update panX based on horizontal dragging
+			panZ += deltaY * panSpeed;  // update panZ based on vertical dragging
+		} 
+		else { // Left mouse button is dragged, so rotate
+			var rotationSpeed = 0.35; // rotation speed
+
+			var rotationSlider = document.querySelector("#rotation");  // gets rotation slider
+			if (rotationSlider) {  
+				var newY = parseFloat(rotationSlider.value) + deltaX * rotationSpeed;  // updates Y rotation if horizontally dragged
+				newY = (newY + 360) % 360;  //  keeps degrees bounded between 0 and 360
+				rotationSlider.value = newY;  //  updates slider value
+			}
+			zAngle += deltaY * rotationSpeed;  // vertical dragging updates zAngle
+			zAngle = (zAngle + 360) % 360;  // keeps degrees bounded between 0 and 360
+		}
+
 		console.log('mouse drag by: ' + deltaX + ', ' + deltaY);
 
 		// implement dragging logic
@@ -284,6 +446,7 @@ function addMouseCallback(canvas)
 		isDragging = false;
 	});
 }
+
 
 function initialize() 
 {
@@ -328,5 +491,6 @@ function initialize()
 
 	window.requestAnimationFrame(draw);
 }
+
 
 window.onload = initialize();
